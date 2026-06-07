@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#071b26" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="世界杯赛程" />
+    <title>2026 世界杯赛程助手</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icon-worldcup-192.png" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">FIFA World Cup 2026</p>
+          <h1>世界杯赛程助手</h1>
+        </div>
+        <button class="install-button" id="installButton" type="button" hidden>安装</button>
+      </header>
+
+      <main>
+        <section class="hero" aria-label="赛事概览">
+          <div class="hero-main">
+            <span class="pill">北京时间优先</span>
+            <h2>104 场比赛，一屏筛选</h2>
+            <p>赛程、分组、场馆、北京时间和 ET 时间都放在本地，适合 iPhone 添加到主屏幕使用。</p>
+          </div>
+          <div class="hero-stats">
+            <div><strong>48</strong><span>球队</span></div>
+            <div><strong>12</strong><span>小组</span></div>
+            <div><strong>104</strong><span>场次</span></div>
+          </div>
+        </section>
+
+        <nav class="segmented" aria-label="主视图">
+          <button class="segment active" data-view="schedule" type="button">赛程</button>
+          <button class="segment" data-view="groups" type="button">分组</button>
+          <button class="segment" data-view="favorites" type="button">关注</button>
+        </nav>
+
+        <section class="controls" aria-label="筛选">
+          <label class="search-box">
+            <span>搜索</span>
+            <input id="searchInput" type="search" placeholder="球队、城市、场馆、阶段" autocomplete="off" />
+          </label>
+          <div class="filter-row" id="stageFilters" aria-label="阶段筛选"></div>
+          <div class="filter-row group-row" id="groupFilters" aria-label="小组筛选"></div>
+        </section>
+
+        <section id="scheduleView" class="view active" aria-live="polite">
+          <div class="section-heading">
+            <h2>全部赛程</h2>
+            <span id="matchCount"></span>
+          </div>
+          <div id="matchesList" class="match-list"></div>
+        </section>
+
+        <section id="groupsView" class="view" aria-live="polite">
+          <div class="section-heading">
+            <h2>小组分布</h2>
+            <span>12 组</span>
+          </div>
+          <div id="groupsGrid" class="groups-grid"></div>
+        </section>
+
+        <section id="favoritesView" class="view" aria-live="polite">
+          <div class="section-heading">
+            <h2>我的关注</h2>
+            <span id="favoriteCount"></span>
+          </div>
+          <div id="favoritesList" class="match-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="matchDialog" class="match-dialog">
+      <div class="dialog-head">
+        <div>
+          <span id="dialogStage" class="pill"></span>
+          <h3 id="dialogTeams"></h3>
+        </div>
+        <button id="dialogClose" class="icon-button" type="button" aria-label="关闭">×</button>
+      </div>
+      <dl class="detail-list">
+        <div><dt>北京时间</dt><dd id="dialogBj"></dd></div>
+        <div><dt>ET 时间</dt><dd id="dialogEt"></dd></div>
+        <div><dt>比赛地点</dt><dd id="dialogVenue"></dd></div>
+        <div><dt>场次</dt><dd id="dialogMatch"></dd></div>
+      </dl>
+      <button id="dialogFavorite" class="primary-action" type="button"></button>
+    </dialog>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
