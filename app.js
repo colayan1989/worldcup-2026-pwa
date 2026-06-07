@@ -207,6 +207,8 @@ const monthMap = { Jun: 5, Jul: 6 };
 const weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 let state = { view: "schedule", stage: "All", group: "All", search: "" };
 let favorites = new Set(JSON.parse(localStorage.getItem("wc26Favorites") || "[]"));
+let modelStore = JSON.parse(localStorage.getItem("wc26Models") || "{}");
+let activeMatchId = null;
 let deferredPrompt = null;
 const params = new URLSearchParams(location.search);
 if (params.get("view")) state.view = params.get("view");
@@ -214,6 +216,18 @@ if (params.get("stage")) state.stage = params.get("stage");
 if (params.get("group")) state.group = params.get("group");
 if (params.get("search")) state.search = params.get("search");
 if (params.get("fav")) params.get("fav").split(",").filter(Boolean).forEach((id) => favorites.add(id));
+if (params.get("demo")) {
+  modelStore.M1 = {
+    homeXg: 1.55,
+    awayXg: 0.82,
+    goalLine: 2.25,
+    homeOdds: 1.72,
+    drawOdds: 3.65,
+    awayOdds: 5.20,
+    overOdds: 1.92,
+    underOdds: 1.88
+  };
+}
 
 const matches = rawMatches
   .map(toMatch)
@@ -415,6 +429,7 @@ function toggleFavorite(id) {
 function openMatch(id) {
   const match = matches.find((item) => item.id === id);
   if (!match) return;
+  activeMatchId = id;
   const dialog = document.querySelector("#matchDialog");
   document.querySelector("#dialogStage").textContent = stageLabel(match);
   document.querySelector("#dialogTeams").textContent = `${zhName(match.home)} vs ${zhName(match.away)}`;
@@ -428,7 +443,300 @@ function openMatch(id) {
     toggleFavorite(match.id);
     dialog.close();
   };
+  loadModelInputs(id);
   dialog.showModal();
+}
+
+function numberValue(id) {
+  const value = document.querySelector(`#${id}`).value.trim();
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function setNumberValue(id, value) {
+  document.querySelector(`#${id}`).value = value ?? "";
+}
+
+function currentInput() {
+  return {
+    homeXg: numberValue("homeXg"),
+    awayXg: numberValue("awayXg"),
+    goalLine: numberValue("goalLine"),
+    homeOdds: numberValue("homeOdds"),
+    drawOdds: numberValue("drawOdds"),
+    awayOdds: numberValue("awayOdds"),
+    overOdds: numberValue("overOdds"),
+    underOdds: numberValue("underOdds")
+  };
+}
+
+function loadModelInputs(id) {
+  const saved = modelStore[id] || {};
+  ["homeXg", "awayXg", "goalLine", "homeOdds", "drawOdds", "awayOdds", "overOdds", "underOdds"].forEach((key) => {
+    setNumberValue(key, saved[key]);
+  });
+  document.querySelector("#modelResults").innerHTML = saved.homeXg ? renderModel(saved) : "";
+}
+
+function saveModelInputs() {
+  if (!activeMatchId) return;
+  const input = currentInput();
+  modelStore[activeMatchId] = input;
+  localStorage.setItem("wc26Models", JSON.stringify(modelStore));
+  document.querySelector("#modelResults").innerHTML = renderModel(input);
+}
+
+function clearModelInputs() {
+  if (!activeMatchId) return;
+  delete modelStore[activeMatchId];
+  localStorage.setItem("wc26Models", JSON.stringify(modelStore));
+  ["homeXg", "awayXg", "goalLine", "homeOdds", "drawOdds", "awayOdds", "overOdds", "underOdds"].forEach((key) => setNumberValue(key, ""));
+  document.querySelector("#modelResults").innerHTML = "";
+}
+
+function factorial(n) {
+  let value = 1;
+  for (let i = 2; i <= n; i += 1) value *= i;
+  return value;
+}
+
+function poisson(lambda, goals) {
+  return Math.exp(-lambda) * Math.pow(lambda, goals) / factorial(goals);
+}
+
+function buildModel(homeXg, awayXg, line) {
+  const maxGoals = 12;
+  let home = 0;
+  let draw = 0;
+  let away = 0;
+  const totals = new Map();
+  const scores = [];
+  for (let h = 0; h <= maxGoals; h += 1) {
+    for (let a = 0; a <= maxGoals; a += 1) {
+      const p = poisson(homeXg, h) * poisson(awayXg, a);
+      if (h > a) home += p;
+      else if (h === a) draw += p;
+      else away += p;
+      totals.set(h + a, (totals.get(h + a) || 0) + p);
+      scores.push({ score: `${h}-${a}`, p });
+    }
+  }
+  scores.sort((x, y) => y.p - x.p);
+  return { home, draw, away, totals, scores: scores.slice(0, 6), line };
+}
+
+function sumTotals(totals, predicate) {
+  let sum = 0;
+  totals.forEach((p, goals) => {
+    if (predicate(goals)) sum += p;
+  });
+  return sum;
+}
+
+function asianOutcome(model, side) {
+  const line = model.line;
+  const floorHalf = Math.floor(line * 2) / 2;
+  const ceilHalf = line * 2 === Math.floor(line * 2) ? floorHalf : floorHalf + 0.5;
+  const frac = Math.abs(line - Math.floor(line));
+  const totals = model.totals;
+  if (side === "over") {
+    if (Math.abs(frac - 0.25) < 0.001) {
+      return {
+        fullWin: sumTotals(totals, (g) => g > ceilHalf),
+        halfWin: 0,
+        push: 0,
+        halfLoss: totals.get(floorHalf) || 0,
+        fullLoss: sumTotals(totals, (g) => g < floorHalf)
+      };
+    }
+    if (Math.abs(frac - 0.75) < 0.001) {
+      return {
+        fullWin: sumTotals(totals, (g) => g > ceilHalf),
+        halfWin: totals.get(ceilHalf) || 0,
+        push: 0,
+        halfLoss: 0,
+        fullLoss: sumTotals(totals, (g) => g < floorHalf)
+      };
+    }
+    return {
+      fullWin: sumTotals(totals, (g) => g > line),
+      halfWin: 0,
+      push: Number.isInteger(line) ? totals.get(line) || 0 : 0,
+      halfLoss: 0,
+      fullLoss: sumTotals(totals, (g) => g < line)
+    };
+  }
+  if (Math.abs(frac - 0.25) < 0.001) {
+    return {
+      fullWin: sumTotals(totals, (g) => g < floorHalf),
+      halfWin: totals.get(floorHalf) || 0,
+      push: 0,
+      halfLoss: 0,
+      fullLoss: sumTotals(totals, (g) => g > ceilHalf)
+    };
+  }
+  if (Math.abs(frac - 0.75) < 0.001) {
+    return {
+      fullWin: sumTotals(totals, (g) => g < floorHalf),
+      halfWin: 0,
+      push: 0,
+      halfLoss: totals.get(ceilHalf) || 0,
+      fullLoss: sumTotals(totals, (g) => g > ceilHalf)
+    };
+  }
+  return {
+    fullWin: sumTotals(totals, (g) => g < line),
+    halfWin: 0,
+    push: Number.isInteger(line) ? totals.get(line) || 0 : 0,
+    halfLoss: 0,
+    fullLoss: sumTotals(totals, (g) => g > line)
+  };
+}
+
+function asianEv(outcome, odds) {
+  return (odds - 1) * outcome.fullWin + 0.5 * (odds - 1) * outcome.halfWin - 0.5 * outcome.halfLoss - outcome.fullLoss;
+}
+
+function fairOdds(outcome) {
+  const winUnits = outcome.fullWin + 0.5 * outcome.halfWin;
+  const lossUnits = outcome.fullLoss + 0.5 * outcome.halfLoss;
+  if (winUnits <= 0) return null;
+  return 1 + lossUnits / winUnits;
+}
+
+function pickJudgement(ev, edge, isMarketProbability) {
+  const second = isMarketProbability ? edge : edge;
+  if (ev >= 0.08 && second >= 0.03) return "可下注";
+  if (ev >= 0.03 && second >= 0.015) return "小注";
+  if (ev > 0 && second > 0) return "仅观察";
+  if (second > 0) return "方向有利/价不够";
+  return "放弃/观望";
+}
+
+function pct(value) {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function odds(value) {
+  return value ? value.toFixed(2) : "-";
+}
+
+function renderModel(input) {
+  const required = ["homeXg", "awayXg", "goalLine", "homeOdds", "drawOdds", "awayOdds", "overOdds", "underOdds"];
+  if (required.some((key) => input[key] === null || input[key] === undefined || input[key] <= 0)) {
+    return `<div class="empty-state">请填完整 xG、盘口和赔率</div>`;
+  }
+  const model = buildModel(input.homeXg, input.awayXg, input.goalLine);
+  const inv = [1 / input.homeOdds, 1 / input.drawOdds, 1 / input.awayOdds];
+  const sumInv = inv.reduce((a, b) => a + b, 0);
+  const sides = [
+    { name: "主胜", p: model.home, price: input.homeOdds, market: inv[0] / sumInv },
+    { name: "平局", p: model.draw, price: input.drawOdds, market: inv[1] / sumInv },
+    { name: "客胜", p: model.away, price: input.awayOdds, market: inv[2] / sumInv }
+  ].map((row) => {
+    const ev = row.price * row.p - 1;
+    const edge = row.p - row.market;
+    return { ...row, ev, edge, fair: 1 / row.p, judgement: pickJudgement(ev, edge, true) };
+  });
+
+  const overOutcome = asianOutcome(model, "over");
+  const underOutcome = asianOutcome(model, "under");
+  const overFair = fairOdds(overOutcome);
+  const underFair = fairOdds(underOutcome);
+  const totalsRows = [
+    { name: "大球", p: overOutcome.fullWin + 0.5 * overOutcome.halfWin, price: input.overOdds, fair: overFair, ev: asianEv(overOutcome, input.overOdds), edge: overFair ? input.overOdds / overFair - 1 : -1 },
+    { name: "小球", p: underOutcome.fullWin + 0.5 * underOutcome.halfWin, price: input.underOdds, fair: underFair, ev: asianEv(underOutcome, input.underOdds), edge: underFair ? input.underOdds / underFair - 1 : -1 }
+  ].map((row) => ({ ...row, judgement: pickJudgement(row.ev, row.edge, false) }));
+
+  const rows = [...sides, ...totalsRows].sort((a, b) => b.ev - a.ev);
+  const betRows = rows.filter((row) => ["可下注", "小注"].includes(row.judgement));
+  const leanRows = rows.filter((row) => ["仅观察", "方向有利/价不够"].includes(row.judgement));
+  const summaryRows = betRows.length ? betRows : leanRows.slice(0, 2);
+  const scoreText = model.scores.map((item) => `${item.score} ${pct(item.p)}`).join(" / ");
+  const goalBand = topGoalBand(model.totals);
+  return `
+    <div class="result-section direction-section">
+      <div class="result-title">
+        <strong>下注方向</strong>
+        <span>${summaryRows.length ? "按EV排序" : "无可买方向"}</span>
+      </div>
+      ${
+        summaryRows.length
+          ? summaryRows.map((row, index) => directionRow(row, index)).join("")
+          : `<div class="empty-model">当前赔率下没有达到下注标准</div>`
+      }
+    </div>
+    <div class="result-section">
+      <div class="result-title">
+        <strong>比分</strong>
+        <span>总xG ${(input.homeXg + input.awayXg).toFixed(2)}</span>
+      </div>
+      <div class="score-grid">
+        ${model.scores.slice(0, 4).map((item, index) => `
+          <div class="score-card ${index === 0 ? "best" : ""}">
+            <strong>${item.score}</strong>
+            <span>${pct(item.p)}</span>
+          </div>
+        `).join("")}
+      </div>
+      <div class="goal-band">进球数倾向：${goalBand}</div>
+    </div>
+    <div class="result-section">
+      <div class="result-title">
+        <strong>胜平负</strong>
+        <span>去水后对比</span>
+      </div>
+      ${sides.map(resultRow).join("")}
+    </div>
+    <div class="result-section">
+      <div class="result-title">
+        <strong>大小球</strong>
+        <span>真实亚盘EV</span>
+      </div>
+      ${totalsRows.map(resultRow).join("")}
+    </div>
+  `;
+}
+
+function topGoalBand(totals) {
+  const bands = [
+    { name: "0-1球", p: sumTotals(totals, (g) => g <= 1) },
+    { name: "1-2球", p: sumTotals(totals, (g) => g >= 1 && g <= 2) },
+    { name: "2-3球", p: sumTotals(totals, (g) => g >= 2 && g <= 3) },
+    { name: "3球以上", p: sumTotals(totals, (g) => g >= 3) }
+  ].sort((a, b) => b.p - a.p);
+  return `${bands[0].name} ${pct(bands[0].p)}`;
+}
+
+function badgeClass(judgement) {
+  if (judgement === "可下注") return "bet";
+  if (judgement === "小注") return "small";
+  if (judgement === "仅观察" || judgement === "方向有利/价不够") return "watch";
+  return "";
+}
+
+function resultRow(row) {
+  return `
+    <div class="result-row">
+      <strong>${row.name}</strong>
+      <span>概率 ${pct(row.p)}　公平 ${odds(row.fair)}　EV ${pct(row.ev)}</span>
+      <em class="badge ${badgeClass(row.judgement)}">${row.judgement}</em>
+    </div>
+  `;
+}
+
+function directionRow(row, index) {
+  return `
+    <div class="direction-row">
+      <span class="rank">${index + 1}</span>
+      <div>
+        <strong>${row.name}</strong>
+        <span>EV ${pct(row.ev)} / 公平赔率 ${odds(row.fair)}</span>
+      </div>
+      <em class="badge ${badgeClass(row.judgement)}">${row.judgement}</em>
+    </div>
+  `;
 }
 
 document.addEventListener("click", (event) => {
@@ -466,6 +774,8 @@ document.querySelector("#searchInput").addEventListener("input", (event) => {
 });
 
 document.querySelector("#dialogClose").addEventListener("click", () => document.querySelector("#matchDialog").close());
+document.querySelector("#calculateModel").addEventListener("click", saveModelInputs);
+document.querySelector("#clearModel").addEventListener("click", clearModelInputs);
 
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();

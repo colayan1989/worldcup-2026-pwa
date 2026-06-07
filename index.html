@@ -91,6 +91,27 @@
         <div><dt>比赛地点</dt><dd id="dialogVenue"></dd></div>
         <div><dt>场次</dt><dd id="dialogMatch"></dd></div>
       </dl>
+      <section class="model-panel" aria-label="泊松模型输入">
+        <div class="model-heading">
+          <h4>泊松模型</h4>
+          <span>按你的公式表逻辑</span>
+        </div>
+        <div class="input-grid">
+          <label>主队xG<input id="homeXg" inputmode="decimal" placeholder="1.35" /></label>
+          <label>客队xG<input id="awayXg" inputmode="decimal" placeholder="1.10" /></label>
+          <label>大小盘口<input id="goalLine" inputmode="decimal" placeholder="2.5" /></label>
+          <label>主胜赔率<input id="homeOdds" inputmode="decimal" placeholder="2.10" /></label>
+          <label>平局赔率<input id="drawOdds" inputmode="decimal" placeholder="3.30" /></label>
+          <label>客胜赔率<input id="awayOdds" inputmode="decimal" placeholder="3.40" /></label>
+          <label>大球赔率<input id="overOdds" inputmode="decimal" placeholder="1.90" /></label>
+          <label>小球赔率<input id="underOdds" inputmode="decimal" placeholder="1.90" /></label>
+        </div>
+        <div class="model-actions">
+          <button id="calculateModel" class="primary-action inline" type="button">计算方向</button>
+          <button id="clearModel" class="secondary-action" type="button">清空</button>
+        </div>
+        <div id="modelResults" class="model-results"></div>
+      </section>
       <button id="dialogFavorite" class="primary-action" type="button"></button>
     </dialog>
 
