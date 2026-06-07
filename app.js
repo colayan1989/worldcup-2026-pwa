@@ -523,7 +523,7 @@ function buildModel(homeXg, awayXg, line) {
     }
   }
   scores.sort((x, y) => y.p - x.p);
-  return { home, draw, away, totals, scores: scores.slice(0, 6), line };
+  return { home, draw, away, totals, scores: scores.slice(0, 10), line };
 }
 
 function sumTotals(totals, predicate) {
@@ -628,6 +628,11 @@ function renderModel(input) {
     return `<div class="empty-state">请填完整 xG、盘口和赔率</div>`;
   }
   const model = buildModel(input.homeXg, input.awayXg, input.goalLine);
+  const btts = 1 - Math.exp(-input.homeXg) - Math.exp(-input.awayXg) + Math.exp(-(input.homeXg + input.awayXg));
+  const coverage = Array.from(model.totals.values()).reduce((a, b) => a + b, 0);
+  const topScore = model.scores[0]?.score || "-";
+  const lineOutcomeOver = asianOutcome(model, "over");
+  const lineOutcomeUnder = asianOutcome(model, "under");
   const inv = [1 / input.homeOdds, 1 / input.drawOdds, 1 / input.awayOdds];
   const sumInv = inv.reduce((a, b) => a + b, 0);
   const sides = [
@@ -637,17 +642,21 @@ function renderModel(input) {
   ].map((row) => {
     const ev = row.price * row.p - 1;
     const edge = row.p - row.market;
-    return { ...row, ev, edge, fair: 1 / row.p, judgement: pickJudgement(ev, edge, true) };
+    const judgement = pickJudgement(ev, edge, true);
+    return { ...row, ev, edge, fair: 1 / row.p, judgement, explain: explainJudgement(judgement, false) };
   });
 
-  const overOutcome = asianOutcome(model, "over");
-  const underOutcome = asianOutcome(model, "under");
+  const overOutcome = lineOutcomeOver;
+  const underOutcome = lineOutcomeUnder;
   const overFair = fairOdds(overOutcome);
   const underFair = fairOdds(underOutcome);
   const totalsRows = [
     { name: "大球", p: overOutcome.fullWin + 0.5 * overOutcome.halfWin, price: input.overOdds, fair: overFair, ev: asianEv(overOutcome, input.overOdds), edge: overFair ? input.overOdds / overFair - 1 : -1 },
     { name: "小球", p: underOutcome.fullWin + 0.5 * underOutcome.halfWin, price: input.underOdds, fair: underFair, ev: asianEv(underOutcome, input.underOdds), edge: underFair ? input.underOdds / underFair - 1 : -1 }
-  ].map((row) => ({ ...row, judgement: pickJudgement(row.ev, row.edge, false) }));
+  ].map((row) => {
+    const judgement = pickJudgement(row.ev, row.edge, false);
+    return { ...row, judgement, explain: explainJudgement(judgement, true) };
+  });
 
   const rows = [...sides, ...totalsRows].sort((a, b) => b.ev - a.ev);
   const betRows = rows.filter((row) => ["可下注", "小注"].includes(row.judgement));
@@ -669,6 +678,24 @@ function renderModel(input) {
     </div>
     <div class="result-section">
       <div class="result-title">
+        <strong>核心结果</strong>
+        <span>对应表格左侧</span>
+      </div>
+      <div class="metric-grid">
+        ${metric("主胜", pct(model.home))}
+        ${metric("平局", pct(model.draw))}
+        ${metric("客胜", pct(model.away))}
+        ${metric("总预期进球", (input.homeXg + input.awayXg).toFixed(2))}
+        ${metric("双方进球BTTS", pct(btts))}
+        ${metric("模型覆盖率", pct(coverage))}
+        ${metric("大小球倾向", totalsRows[0].p > totalsRows[1].p ? "偏大球" : totalsRows[0].p < totalsRows[1].p ? "偏小球" : "均衡")}
+        ${metric("盘口类型", lineType(input.goalLine))}
+        ${metric("最大概率比分", topScore)}
+        ${metric("3球及以下", pct(sumTotals(model.totals, (g) => g <= 3)))}
+      </div>
+    </div>
+    <div class="result-section">
+      <div class="result-title">
         <strong>比分</strong>
         <span>总xG ${(input.homeXg + input.awayXg).toFixed(2)}</span>
       </div>
@@ -682,6 +709,20 @@ function renderModel(input) {
       </div>
       <div class="goal-band">进球数倾向：${goalBand}</div>
     </div>
+    <details class="detail-table-section" open>
+      <summary>最高概率比分前10</summary>
+      <div class="score-list">
+        ${model.scores.slice(0, 10).map((item, index) => {
+          const [h, a] = item.score.split("-").map(Number);
+          const result = h > a ? "主胜" : h === a ? "平局" : "客胜";
+          return `
+            <div class="score-list-row">
+              <b>${index + 1}</b><strong>${item.score}</strong><span>${pct(item.p)}</span><span>${result}</span><span>${h + a}球</span>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </details>
     <div class="result-section">
       <div class="result-title">
         <strong>胜平负</strong>
@@ -696,7 +737,64 @@ function renderModel(input) {
       </div>
       ${totalsRows.map(resultRow).join("")}
     </div>
+    <details class="detail-table-section" ${params.get("details") === "1" ? "open" : ""}>
+      <summary>完整明细</summary>
+      <div class="detail-table-title">胜平负明细</div>
+      ${sides.map((row) => detailRow(row, "去水概率", pct(row.market), "去水差", pct(row.edge))).join("")}
+      <div class="detail-table-title">大小球明细</div>
+      ${totalsRows.map((row) => detailRow(row, "模型胜率", pct(row.p), "赔率优势", pct(row.edge))).join("")}
+    </details>
+    <details class="detail-table-section" ${params.get("details") === "1" ? "open" : ""}>
+      <summary>常见半球大小概率</summary>
+      <div class="common-lines">
+        ${[0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5].map((line) => `
+          <div><strong>${line}</strong><span>大 ${pct(sumTotals(model.totals, (g) => g > line))}</span><span>小 ${pct(sumTotals(model.totals, (g) => g < line))}</span></div>
+        `).join("")}
+      </div>
+    </details>
+    <details class="detail-table-section" ${params.get("details") === "1" ? "open" : ""}>
+      <summary>当前盘口结算拆分</summary>
+      <div class="settle-grid">
+        ${settleRow("大球", lineOutcomeOver)}
+        ${settleRow("小球", lineOutcomeUnder)}
+      </div>
+    </details>
   `;
+}
+
+function metric(label, value) {
+  return `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`;
+}
+
+function lineType(line) {
+  const frac = Math.abs(line - Math.floor(line));
+  if (Math.abs(frac - 0.25) < 0.001) return "0.25盘";
+  if (Math.abs(frac - 0.75) < 0.001) return "0.75盘";
+  if (Number.isInteger(line)) return "整球盘";
+  return "半球盘";
+}
+
+function settleRow(name, outcome) {
+  const net = outcome.fullWin + 0.5 * outcome.halfWin - 0.5 * outcome.halfLoss - outcome.fullLoss;
+  return `
+    <div class="settle-row">
+      <strong>${name}</strong>
+      <span>全赢 ${pct(outcome.fullWin)}</span>
+      <span>半赢 ${pct(outcome.halfWin)}</span>
+      <span>走水 ${pct(outcome.push)}</span>
+      <span>半输 ${pct(outcome.halfLoss)}</span>
+      <span>全输 ${pct(outcome.fullLoss)}</span>
+      <b>净优势 ${pct(net)}</b>
+    </div>
+  `;
+}
+
+function explainJudgement(judgement, isTotal) {
+  if (judgement === "可下注") return isTotal ? "真实亚盘EV和赔率优势达标" : "EV和去水差达标";
+  if (judgement === "小注") return isTotal ? "真实亚盘EV为正，轻仓" : "价值尚可，轻仓";
+  if (judgement === "仅观察") return "优势偏薄，只观察";
+  if (judgement === "方向有利/价不够") return "方向可参考，价格不够";
+  return "无单场下注价值";
 }
 
 function topGoalBand(totals) {
@@ -735,6 +833,26 @@ function directionRow(row, index) {
         <span>EV ${pct(row.ev)} / 公平赔率 ${odds(row.fair)}</span>
       </div>
       <em class="badge ${badgeClass(row.judgement)}">${row.judgement}</em>
+    </div>
+  `;
+}
+
+function detailRow(row, labelA, valueA, labelB, valueB) {
+  return `
+    <div class="detail-data-card">
+      <div class="detail-data-head">
+        <strong>${row.name}</strong>
+        <em class="badge ${badgeClass(row.judgement)}">${row.judgement}</em>
+      </div>
+      <div class="detail-data-grid">
+        <span>模型概率</span><b>${pct(row.p)}</b>
+        <span>公平赔率</span><b>${odds(row.fair)}</b>
+        <span>初盘赔率</span><b>${odds(row.price)}</b>
+        <span>${labelA}</span><b>${valueA}</b>
+        <span>${labelB}</span><b>${valueB}</b>
+        <span>EV</span><b>${pct(row.ev)}</b>
+      </div>
+      <p>${row.explain}</p>
     </div>
   `;
 }
